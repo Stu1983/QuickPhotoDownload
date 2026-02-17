@@ -190,6 +190,27 @@ const styles = {
     whiteSpace: 'nowrap',
   },
 
+  /* Navigation */
+  navBtn: {
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'rgba(0,0,0,0.5)',
+    border: 'none',
+    color: '#fff',
+    fontSize: '2rem',
+    padding: '16px 12px',
+    cursor: 'pointer',
+    zIndex: 10,
+    borderRadius: '4px',
+  },
+  navHint: {
+    color: 'var(--text-secondary)',
+    fontSize: '0.75rem',
+    textAlign: 'center',
+    padding: '4px 0',
+  },
+
   /* Footer */
   footer: {
     display: 'flex',
@@ -201,16 +222,45 @@ const styles = {
 };
 
 export default function CompareView({ photos, photoIds, onClose, onToggleFlag }) {
-  const [order, setOrder] = useState([0, 1]);
+  // Anchor (left) stays fixed; right photo can be navigated through the list
+  const [anchorId, setAnchorId] = useState(photoIds[0]);
+  const [rightIdx, setRightIdx] = useState(() => {
+    const idx = photos.findIndex(p => p.id === photoIds[1]);
+    return idx >= 0 ? idx : 0;
+  });
   const [mode, setMode] = useState('side'); // 'side' or 'overlay'
   const [sliderPos, setSliderPos] = useState(0.5); // 0..1
   const containerRef = useRef(null);
   const dragging = useRef(false);
 
-  const leftPhoto = photos.find(p => p.id === photoIds[order[0]]);
-  const rightPhoto = photos.find(p => p.id === photoIds[order[1]]);
+  const leftPhoto = photos.find(p => p.id === anchorId);
+  const rightPhoto = photos[rightIdx];
 
-  const swap = () => setOrder(([a, b]) => [b, a]);
+  const goNext = useCallback(() => {
+    setRightIdx(i => {
+      let next = i + 1;
+      // Skip the anchor photo
+      while (next < photos.length && photos[next].id === anchorId) next++;
+      return next < photos.length ? next : i;
+    });
+  }, [photos, anchorId]);
+
+  const goPrev = useCallback(() => {
+    setRightIdx(i => {
+      let prev = i - 1;
+      // Skip the anchor photo
+      while (prev >= 0 && photos[prev].id === anchorId) prev--;
+      return prev >= 0 ? prev : i;
+    });
+  }, [photos, anchorId]);
+
+  const swap = useCallback(() => {
+    const currentRightPhoto = photos[rightIdx];
+    if (!currentRightPhoto) return;
+    const oldAnchorIdx = photos.findIndex(p => p.id === anchorId);
+    setAnchorId(currentRightPhoto.id);
+    setRightIdx(oldAnchorIdx >= 0 ? oldAnchorIdx : 0);
+  }, [photos, rightIdx, anchorId]);
 
   const updateSlider = useCallback((clientX) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -237,12 +287,25 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight') goNext();
+      else if (e.key === 'ArrowLeft') goPrev();
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, goNext, goPrev]);
 
   if (!leftPhoto || !rightPhoto) return null;
+
+  const anchorIdx = photos.findIndex(p => p.id === anchorId);
+  // Check if prev/next are available (skipping anchor)
+  let hasPrev = false;
+  for (let i = rightIdx - 1; i >= 0; i--) {
+    if (photos[i].id !== anchorId) { hasPrev = true; break; }
+  }
+  let hasNext = false;
+  for (let i = rightIdx + 1; i < photos.length; i++) {
+    if (photos[i].id !== anchorId) { hasNext = true; break; }
+  }
 
   const leftDate = formatDate(leftPhoto.exif_date);
   const rightDate = formatDate(rightPhoto.exif_date);
@@ -273,11 +336,17 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
         <div style={styles.container}>
           <div style={styles.side}>
             <img src={leftPhoto.preview_url} alt={leftPhoto.filename} style={styles.image} />
-            <div style={styles.label}>{leftPhoto.filename}</div>
+            <div style={styles.label}>{leftPhoto.filename} (anchor)</div>
           </div>
           <div style={styles.divider} />
-          <div style={styles.side}>
+          <div style={{ ...styles.side, position: 'relative' }}>
+            {hasPrev && (
+              <button style={{ ...styles.navBtn, left: '8px' }} onClick={goPrev}>&#8249;</button>
+            )}
             <img src={rightPhoto.preview_url} alt={rightPhoto.filename} style={styles.image} />
+            {hasNext && (
+              <button style={{ ...styles.navBtn, right: '8px' }} onClick={goNext}>&#8250;</button>
+            )}
             <div style={styles.label}>{rightPhoto.filename}</div>
           </div>
         </div>
@@ -312,7 +381,7 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
           </div>
 
           {/* Labels */}
-          <div style={{ ...styles.overlayLabel, left: '10px' }}>{leftPhoto.filename}</div>
+          <div style={{ ...styles.overlayLabel, left: '10px' }}>{leftPhoto.filename} (anchor)</div>
           <div style={{ ...styles.overlayLabel, right: '10px' }}>{rightPhoto.filename}</div>
 
           {/* Date stamps */}
@@ -324,6 +393,10 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
           )}
         </div>
       )}
+
+      <div style={styles.navHint}>
+        &#8592; / &#8594; to change comparison photo
+      </div>
 
       <div style={styles.footer}>
         <div style={styles.flagSection}>
