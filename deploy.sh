@@ -104,9 +104,10 @@ if [ "$BRANCH" != "$CURRENT_BRANCH" ]; then
     git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH" || { echo -e "${RED}ERROR: Could not checkout $BRANCH${NC}"; exit 1; }
 fi
 
-# Pull latest code
+# Reset local branch to match remote (deploy-only clone, no local edits to preserve)
 echo -e "${GREEN}Pulling latest from $BRANCH...${NC}"
-git pull origin "$BRANCH"
+git fetch origin "$BRANCH"
+git reset --hard "origin/$BRANCH"
 
 # Build the Docker image (uses layer cache for faster rebuilds)
 echo -e "${GREEN}Building Docker image...${NC}"
