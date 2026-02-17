@@ -1,10 +1,15 @@
 import logging
 from datetime import datetime
 from typing import Optional
+
 from PIL import Image
-from PIL.ExifTags import Base as ExifBase
+from PIL.ExifTags import Base as ExifBase, IFD
 
 logger = logging.getLogger(__name__)
+
+# EXIF sub-IFD tag IDs for date fields
+_TAG_DATE_ORIGINAL = 0x9003   # DateTimeOriginal
+_TAG_DATE_DIGITIZED = 0x9004  # DateTimeDigitized
 
 
 class ExifData:
@@ -40,28 +45,54 @@ class ExifData:
         return None
 
 
+def _parse_exif_date(date_str) -> Optional[datetime]:
+    """Parse an EXIF date string like 'YYYY:MM:DD HH:MM:SS'."""
+    if not date_str:
+        return None
+    try:
+        return datetime.strptime(str(date_str), "%Y:%m:%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
 def read_exif(filepath: str) -> ExifData:
-    """Read EXIF data from an image file."""
+    """Read EXIF data from an image file.
+
+    In Pillow 10+, DateTimeOriginal and DateTimeDigitized live in the
+    EXIF sub-IFD (0x8769) and must be accessed via get_ifd(), not from
+    the top-level getexif() dict.
+    """
     try:
         with Image.open(filepath) as img:
             width, height = img.size
-            exif_dict = img.getexif()
+            exif = img.getexif()
             date_taken = None
+            source_field = None
 
-            if exif_dict:
-                # Try DateTimeOriginal first
-                date_str = exif_dict.get(ExifBase.DateTimeOriginal)
-                if not date_str:
-                    date_str = exif_dict.get(ExifBase.DateTimeDigitized)
-                if not date_str:
-                    date_str = exif_dict.get(ExifBase.DateTime)
+            if exif:
+                # Access the EXIF sub-IFD where DateTimeOriginal lives
+                exif_ifd = exif.get_ifd(IFD.Exif)
 
-                if date_str:
-                    # EXIF dates are typically "YYYY:MM:DD HH:MM:SS"
-                    try:
-                        date_taken = datetime.strptime(str(date_str), "%Y:%m:%d %H:%M:%S")
-                    except ValueError:
-                        logger.warning("Could not parse EXIF date: %s", date_str)
+                if exif_ifd:
+                    date_taken = _parse_exif_date(exif_ifd.get(_TAG_DATE_ORIGINAL))
+                    if date_taken:
+                        source_field = "DateTimeOriginal (EXIF IFD)"
+
+                    if not date_taken:
+                        date_taken = _parse_exif_date(exif_ifd.get(_TAG_DATE_DIGITIZED))
+                        if date_taken:
+                            source_field = "DateTimeDigitized (EXIF IFD)"
+
+                # Fallback: DateTime in main IFD (less reliable — updated on file save)
+                if not date_taken:
+                    date_taken = _parse_exif_date(exif.get(ExifBase.DateTime))
+                    if date_taken:
+                        source_field = "DateTime (main IFD, fallback)"
+
+            if date_taken:
+                logger.info("EXIF %s: %s → %s", source_field, date_taken.isoformat(), filepath)
+            else:
+                logger.warning("No EXIF date found in %s", filepath)
 
             return ExifData(date_taken=date_taken, width=width, height=height)
     except Exception as e:
