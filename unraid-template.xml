@@ -1,0 +1,208 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>PhotoBrowser</Name>
+  <Repository>ghcr.io/stu1983/quickphotodownload:latest</Repository>
+  <Registry>https://github.com/Stu1983/QuickPhotoDownload/pkgs/container/quickphotodownload</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release from main branch</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>main</Tag>
+    <TagDescription>Main development branch</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Stu1983/QuickPhotoDownload/issues</Support>
+  <Project>https://github.com/Stu1983/QuickPhotoDownload</Project>
+  <Overview>
+    Self-hosted photo browser and organiser. Photos land in a source directory (e.g. via FTP from a camera) and the app automatically sorts them into date folders, generates thumbnails/previews, and serves a web UI for browsing, comparing, flagging, and downloading.
+  </Overview>
+  <Category>MediaApp:Photos</Category>
+  <WebUI>http://[IP]:[PORT:8580]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/Stu1983/QuickPhotoDownload/main/frontend/public/favicon.ico</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <Description>
+    Photo Browser - A self-hosted photo browser and organiser designed for Unraid.
+    Features: automatic date-based sorting, EXIF metadata extraction, RAW file pairing,
+    thumbnail/preview generation, colour flagging, side-by-side and overlay comparison,
+    zoom/pan, and batch ZIP download.
+  </Description>
+
+  <!-- Port mapping -->
+  <Config
+    Name="Web UI Port"
+    Target="8080"
+    Default="8580"
+    Mode="tcp"
+    Description="Port for the Photo Browser web interface."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8580</Config>
+
+  <!-- Volume mappings -->
+  <Config
+    Name="Photos Directory"
+    Target="/photos"
+    Default="/mnt/user/ftp"
+    Mode="rw"
+    Description="Path to your photos. Source photos (e.g. FTP uploads) and sorted date folders live here."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/ftp</Config>
+
+  <Config
+    Name="Cache Directory"
+    Target="/app/cache"
+    Default="/mnt/user/appdata/photo-browser/cache"
+    Mode="rw"
+    Description="App data: SQLite database, thumbnail cache, and preview cache. Persist this across updates."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/photo-browser/cache</Config>
+
+  <!-- Environment variables -->
+  <Config
+    Name="Timezone"
+    Target="TZ"
+    Default="Europe/London"
+    Description="Container timezone (e.g. Europe/London, America/New_York)."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">Europe/London</Config>
+
+  <Config
+    Name="Scan Interval (minutes)"
+    Target="SCAN_INTERVAL_MINUTES"
+    Default="5"
+    Description="How often the background scanner runs to ingest new photos and repair thumbnails."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">5</Config>
+
+  <Config
+    Name="Log Level"
+    Target="LOG_LEVEL"
+    Default="info"
+    Description="Logging verbosity: debug, info, warning, error."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">info</Config>
+
+  <Config
+    Name="Thumbnail Size (px)"
+    Target="THUMB_SIZE"
+    Default="400"
+    Description="Max dimension for grid thumbnails in pixels."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">400</Config>
+
+  <Config
+    Name="Preview Size (px)"
+    Target="PREVIEW_SIZE"
+    Default="2000"
+    Description="Max dimension for the enlarged preview images in pixels."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">2000</Config>
+
+  <Config
+    Name="Share Download Size (px)"
+    Target="SHARE_SIZE"
+    Default="2048"
+    Description="Max dimension for 'Share' quality ZIP downloads."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">2048</Config>
+
+  <Config
+    Name="Share Download Quality (%)"
+    Target="SHARE_QUALITY"
+    Default="80"
+    Description="JPEG quality for 'Share' size downloads (1-100)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">80</Config>
+
+  <Config
+    Name="High Download Size (px)"
+    Target="HIGH_SIZE"
+    Default="4096"
+    Description="Max dimension for 'High Quality' ZIP downloads."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">4096</Config>
+
+  <Config
+    Name="High Download Quality (%)"
+    Target="HIGH_QUALITY"
+    Default="90"
+    Description="JPEG quality for 'High Quality' downloads (1-100)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">90</Config>
+
+  <Config
+    Name="Thumbnail Quality (%)"
+    Target="THUMB_QUALITY"
+    Default="80"
+    Description="JPEG quality for cached thumbnails (1-100)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">80</Config>
+
+  <Config
+    Name="Preview Quality (%)"
+    Target="PREVIEW_QUALITY"
+    Default="85"
+    Description="JPEG quality for cached previews (1-100)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">85</Config>
+
+  <Config
+    Name="Source Directory"
+    Target="SOURCE_DIR"
+    Default="/photos"
+    Description="Path inside container where new photos arrive (usually same as Photos Directory mount)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">/photos</Config>
+
+  <Config
+    Name="Sorted Directory"
+    Target="SORTED_DIR"
+    Default="/photos"
+    Description="Path inside container where date-sorted folders are created."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">/photos</Config>
+
+  <Config
+    Name="RAW Extensions"
+    Target="RAW_EXTENSIONS"
+    Default="cr3,arw,nef,raf,cr2,dng,orf,rw2"
+    Description="Comma-separated list of RAW file extensions to pair with JPEGs."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">cr3,arw,nef,raf,cr2,dng,orf,rw2</Config>
+</Container>
