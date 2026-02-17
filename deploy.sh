@@ -10,7 +10,7 @@ set -e
 REPO_URL="https://github.com/Stu1983/QuickPhotoDownload.git"
 APP_DIR="/mnt/user/appdata/photo-browser"
 CACHE_DIR="$APP_DIR/cache"
-SOURCE_DIR="/mnt/user/camera-uploads"
+SOURCE_DIR="/mnt/user/ftp/"
 SORTED_DIR="/mnt/user/photos-sorted"
 CONTAINER_NAME="photo-browser"
 IMAGE_NAME="photo-browser:local"
