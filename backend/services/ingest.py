@@ -155,6 +155,11 @@ async def ingest_file(filepath: str) -> bool:
             # Fix timestamps LAST — after all file reads (thumbnails) are done
             if exif.date_taken:
                 await loop.run_in_executor(_executor, safe_set_timestamps, dest_path, exif.date_taken)
+                # Also stamp the paired RAW file
+                if raw_filename:
+                    raw_dest = os.path.join(folder_path, raw_filename)
+                    if os.path.exists(raw_dest):
+                        await loop.run_in_executor(_executor, safe_set_timestamps, raw_dest, exif.date_taken)
 
             logger.info("Ingested %s → %s/%s (id=%d)", filepath, folder_name, filename, photo_id)
             return True
@@ -189,6 +194,10 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
                 try:
                     dt = datetime.fromisoformat(exif_date_str)
                     await loop.run_in_executor(_executor, safe_set_timestamps, filepath, dt)
+                    # Also stamp the paired RAW file
+                    raw_path = await loop.run_in_executor(_executor, find_matching_raw, filepath)
+                    if raw_path and os.path.exists(raw_path):
+                        await loop.run_in_executor(_executor, safe_set_timestamps, raw_path, dt)
                 except (ValueError, TypeError):
                     pass
             return False
@@ -233,6 +242,10 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
             # Fix file timestamps LAST — after all file reads (thumbnails) are done
             if exif.date_taken:
                 await loop.run_in_executor(_executor, safe_set_timestamps, filepath, exif.date_taken)
+                # Also stamp the paired RAW file
+                raw_path = await loop.run_in_executor(_executor, find_matching_raw, filepath)
+                if raw_path and os.path.exists(raw_path):
+                    await loop.run_in_executor(_executor, safe_set_timestamps, raw_path, exif.date_taken)
 
             logger.info("Indexed existing file: %s/%s (id=%d)", folder_name, filename, photo_id)
             return True
