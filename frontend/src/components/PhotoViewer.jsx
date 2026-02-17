@@ -2,6 +2,22 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import FlagBar from './FlagBar';
 import usePreloader from '../hooks/usePreloader';
 
+function formatDate(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  } catch {
+    return null;
+  }
+}
+
 const styles = {
   overlay: {
     position: 'fixed',
@@ -76,6 +92,20 @@ const styles = {
     background: 'var(--accent)',
     borderColor: 'var(--accent)',
   },
+  dateStamp: {
+    position: 'absolute',
+    bottom: '12px',
+    right: '12px',
+    background: 'rgba(0,0,0,0.6)',
+    color: '#ffa500',
+    fontSize: '0.9rem',
+    padding: '4px 10px',
+    borderRadius: '4px',
+    fontWeight: 700,
+    whiteSpace: 'nowrap',
+    zIndex: 10,
+    pointerEvents: 'none',
+  },
 };
 
 export default function PhotoViewer({
@@ -127,6 +157,7 @@ export default function PhotoViewer({
   if (!photo) return null;
 
   const isInCompare = compareSelection?.includes(photo.id);
+  const dateText = formatDate(photo.exif_date);
 
   return (
     <div style={styles.overlay}>
@@ -157,6 +188,9 @@ export default function PhotoViewer({
           alt={photo.filename}
           style={styles.image}
         />
+        {dateText && (
+          <div style={styles.dateStamp}>{dateText}</div>
+        )}
         {index < photos.length - 1 && (
           <button style={{ ...styles.navBtn, right: '8px' }} onClick={goNext}>
             &#8250;
