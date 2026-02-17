@@ -6,7 +6,7 @@ from datetime import datetime
 from backend.config import config
 from backend.database import get_db
 from backend.services.file_ops import is_jpeg, should_ignore
-from backend.services.ingest import index_existing_file, ingest_file
+from backend.services.ingest import _ensure_thumbnails, index_existing_file, ingest_file
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,13 @@ async def run_scan():
         # 2. Index files in sorted that aren't in DB
         await _scan_sorted()
 
-        # 3. Remove DB entries for files that no longer exist
+        # 3. Repair any photos with missing thumbnails
+        await _repair_missing_thumbnails()
+
+        # 4. Remove DB entries for files that no longer exist
         await _cleanup_missing()
 
-        # 4. Update folder counts
+        # 5. Update folder counts
         await _update_folder_counts()
 
         _last_scan = datetime.now().isoformat()
@@ -42,24 +45,42 @@ async def run_scan():
 
 
 async def _scan_source():
-    """Scan source directory for unprocessed files."""
+    """Scan source directory for unprocessed files.
+
+    When source and sorted are the same directory, only look at files
+    directly in the root (not inside date subdirectories — those are
+    already sorted and handled by _scan_sorted).
+    """
     source_dir = config.SOURCE_DIR
     if not os.path.exists(source_dir):
         logger.warning("Source directory does not exist: %s", source_dir)
         return
 
-    for root, dirs, files in os.walk(source_dir):
-        # Filter out ignored directories
-        dirs[:] = [d for d in dirs if not should_ignore(d)]
+    same_dir = os.path.realpath(source_dir) == os.path.realpath(config.SORTED_DIR)
 
-        for f in files:
+    if same_dir:
+        # Only process loose files at the root level
+        for f in os.listdir(source_dir):
+            filepath = os.path.join(source_dir, f)
+            if os.path.isdir(filepath):
+                continue
             if should_ignore(f) or not is_jpeg(f):
                 continue
-            filepath = os.path.join(root, f)
             try:
                 await ingest_file(filepath)
             except Exception as e:
                 logger.error("Error ingesting %s: %s", filepath, e)
+    else:
+        for root, dirs, files in os.walk(source_dir):
+            dirs[:] = [d for d in dirs if not should_ignore(d)]
+            for f in files:
+                if should_ignore(f) or not is_jpeg(f):
+                    continue
+                filepath = os.path.join(root, f)
+                try:
+                    await ingest_file(filepath)
+                except Exception as e:
+                    logger.error("Error ingesting %s: %s", filepath, e)
 
 
 async def _scan_sorted():
@@ -82,6 +103,36 @@ async def _scan_sorted():
                 await index_existing_file(filepath, folder_entry)
             except Exception as e:
                 logger.error("Error indexing %s: %s", filepath, e)
+
+
+async def _repair_missing_thumbnails():
+    """Find photos in the DB that are missing thumbnail/preview files and regenerate."""
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT id, original_path, filename FROM photos"
+        )
+        repaired = 0
+        for row in rows:
+            photo_id, original_path, filename = row[0], row[1], row[2]
+            thumb_path = os.path.join(config.THUMBS_DIR, f"{photo_id}.jpg")
+            preview_path = os.path.join(config.PREVIEWS_DIR, f"{photo_id}.jpg")
+
+            if os.path.exists(thumb_path) and os.path.exists(preview_path):
+                continue
+
+            # Source file on disk
+            filepath = os.path.join(config.SORTED_DIR, original_path, filename)
+            if not os.path.exists(filepath):
+                continue
+
+            if await _ensure_thumbnails(db, photo_id, filepath):
+                repaired += 1
+
+        if repaired:
+            logger.info("Repaired thumbnails for %d photos", repaired)
+    finally:
+        await db.close()
 
 
 async def _cleanup_missing():

@@ -35,7 +35,19 @@ class PhotoHandler(FileSystemEventHandler):
         )
 
     async def _delayed_ingest(self, filepath: str):
-        await asyncio.sleep(2)  # Wait for file write to complete
+        # Wait for FTP transfer to finish — camera JPEGs can be 20-40MB
+        # Check that file size has stabilised before ingesting
+        prev_size = -1
+        for _ in range(15):
+            await asyncio.sleep(2)
+            try:
+                cur_size = os.path.getsize(filepath)
+            except OSError:
+                return
+            if cur_size == prev_size and cur_size > 0:
+                break
+            prev_size = cur_size
+
         try:
             await ingest_file(filepath)
         except Exception as e:
