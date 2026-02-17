@@ -15,8 +15,8 @@ class Config:
     FILE_OP_RETRY_DELAY = int(os.environ.get("FILE_OP_RETRY_DELAY", "2"))
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 
-    SOURCE_DIR = os.environ.get("SOURCE_DIR", "/photos/source")
-    SORTED_DIR = os.environ.get("SORTED_DIR", "/photos/sorted")
+    SOURCE_DIR = os.environ.get("SOURCE_DIR", "/photos")
+    SORTED_DIR = os.environ.get("SORTED_DIR", "/photos")
     CACHE_DIR = os.environ.get("CACHE_DIR", "/app/cache")
     DB_PATH = os.path.join(CACHE_DIR, "photobrowser.db")
     THUMBS_DIR = os.path.join(CACHE_DIR, "thumbs")
