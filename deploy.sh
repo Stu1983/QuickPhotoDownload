@@ -10,8 +10,7 @@ set -e
 REPO_URL="https://github.com/Stu1983/QuickPhotoDownload.git"
 APP_DIR="/mnt/user/appdata/photo-browser"
 CACHE_DIR="$APP_DIR/cache"
-SOURCE_DIR="/mnt/user/camera-uploads"
-SORTED_DIR="/mnt/user/photos-sorted"
+PHOTOS_DIR="/mnt/user/ftp"
 CONTAINER_NAME="photo-browser"
 IMAGE_NAME="photo-browser:local"
 PORT="8580"
@@ -133,16 +132,14 @@ fi
 # Ensure directories exist
 mkdir -p "$CACHE_DIR/thumbs"
 mkdir -p "$CACHE_DIR/previews"
-mkdir -p "$SOURCE_DIR"
-mkdir -p "$SORTED_DIR"
+mkdir -p "$PHOTOS_DIR"
 
 # Start new container
 echo -e "${GREEN}Starting new container...${NC}"
 docker run -d \
   --name "$CONTAINER_NAME" \
   -p "$PORT:8080" \
-  -v "$SOURCE_DIR:/photos/source" \
-  -v "$SORTED_DIR:/photos/sorted" \
+  -v "$PHOTOS_DIR:/photos" \
   -v "$CACHE_DIR:/app/cache" \
   -e TZ=Europe/London \
   -e SCAN_INTERVAL_MINUTES=5 \
@@ -158,9 +155,8 @@ IP_ADDR=$(hostname -I | awk '{print $1}')
 echo -e "Photo Browser: ${GREEN}http://$IP_ADDR:$PORT${NC}"
 echo ""
 echo -e "${YELLOW}Volume mounts:${NC}"
-echo -e "  Source (FTP uploads): ${GREEN}$SOURCE_DIR${NC} → /photos/source"
-echo -e "  Sorted (date folders): ${GREEN}$SORTED_DIR${NC} → /photos/sorted"
-echo -e "  Cache (thumbs, DB):   ${GREEN}$CACHE_DIR${NC} → /app/cache"
+echo -e "  Photos (FTP + sorted): ${GREEN}$PHOTOS_DIR${NC} → /photos"
+echo -e "  Cache (thumbs, DB):    ${GREEN}$CACHE_DIR${NC} → /app/cache"
 echo ""
 
 # Show container status
