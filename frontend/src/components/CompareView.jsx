@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import FlagBar from './FlagBar';
+import usePanZoom from '../hooks/usePanZoom';
 
 function formatDate(isoStr) {
   if (!isoStr) return null;
@@ -92,12 +93,16 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
     overflow: 'hidden',
+    position: 'relative',
+    touchAction: 'none',
   },
   image: {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'contain',
     flex: 1,
+    userSelect: 'none',
+    WebkitUserDrag: 'none',
   },
   divider: {
     width: '4px',
@@ -117,7 +122,6 @@ const styles = {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    cursor: 'ew-resize',
     touchAction: 'none',
   },
   overlayImgBase: {
@@ -140,15 +144,26 @@ const styles = {
     pointerEvents: 'none',
     userSelect: 'none',
   },
+  /* Wide invisible hit area around the slider line */
+  sliderGrabZone: {
+    position: 'absolute',
+    top: 0,
+    width: '40px',
+    height: '100%',
+    cursor: 'ew-resize',
+    zIndex: 5,
+    touchAction: 'none',
+  },
   sliderLine: {
     position: 'absolute',
     top: 0,
+    left: '50%',
+    transform: 'translateX(-50%)',
     width: '3px',
     height: '100%',
     background: '#fff',
-    cursor: 'ew-resize',
-    zIndex: 5,
     boxShadow: '0 0 6px rgba(0,0,0,0.8)',
+    pointerEvents: 'none',
   },
   sliderHandle: {
     position: 'absolute',
@@ -166,6 +181,7 @@ const styles = {
     color: '#333',
     boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
     userSelect: 'none',
+    pointerEvents: 'none',
   },
   overlayLabel: {
     position: 'absolute',
@@ -215,6 +231,19 @@ const styles = {
     textAlign: 'center',
     padding: '4px 0',
   },
+  zoomIndicator: {
+    position: 'absolute',
+    top: '10px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'rgba(0,0,0,0.6)',
+    color: '#fff',
+    fontSize: '0.75rem',
+    padding: '3px 10px',
+    borderRadius: '12px',
+    pointerEvents: 'none',
+    zIndex: 10,
+  },
 
   /* Footer */
   footer: {
@@ -235,8 +264,13 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
   });
   const [mode, setMode] = useState('side'); // 'side' or 'overlay'
   const [sliderPos, setSliderPos] = useState(0.5); // 0..1
-  const containerRef = useRef(null);
-  const dragging = useRef(false);
+  const sliderContainerRef = useRef(null);
+  const sliderDragging = useRef(false);
+
+  // Three zoom instances (always called — React hook rules)
+  const leftZoom = usePanZoom();
+  const rightZoom = usePanZoom();
+  const overlayZoom = usePanZoom();
 
   const leftPhoto = photos.find(p => p.id === anchorId);
   const rightPhoto = photos[rightIdx];
@@ -244,7 +278,6 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
   const goNext = useCallback(() => {
     setRightIdx(i => {
       let next = i + 1;
-      // Skip the anchor photo
       while (next < photos.length && photos[next].id === anchorId) next++;
       return next < photos.length ? next : i;
     });
@@ -253,7 +286,6 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
   const goPrev = useCallback(() => {
     setRightIdx(i => {
       let prev = i - 1;
-      // Skip the anchor photo
       while (prev >= 0 && photos[prev].id === anchorId) prev--;
       return prev >= 0 ? prev : i;
     });
@@ -267,28 +299,34 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
     setRightIdx(oldAnchorIdx >= 0 ? oldAnchorIdx : 0);
   }, [photos, rightIdx, anchorId]);
 
-  const updateSlider = useCallback((clientX) => {
-    const rect = containerRef.current?.getBoundingClientRect();
+  // Reset all zoom when mode changes or photos change
+  useEffect(() => {
+    leftZoom.reset();
+    rightZoom.reset();
+    overlayZoom.reset();
+  }, [mode, anchorId, rightIdx]);
+
+  // ── Slider drag (overlay mode) — only on the grab zone ──────
+  const onSliderPointerDown = useCallback((e) => {
+    e.stopPropagation();
+    sliderDragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+
+  const onSliderPointerMove = useCallback((e) => {
+    if (!sliderDragging.current) return;
+    // Use the overlay container for position reference
+    const rect = sliderContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     setSliderPos(x / rect.width);
   }, []);
 
-  const onPointerDown = useCallback((e) => {
-    dragging.current = true;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    updateSlider(e.clientX);
-  }, [updateSlider]);
-
-  const onPointerMove = useCallback((e) => {
-    if (!dragging.current) return;
-    updateSlider(e.clientX);
-  }, [updateSlider]);
-
-  const onPointerUp = useCallback(() => {
-    dragging.current = false;
+  const onSliderPointerUp = useCallback(() => {
+    sliderDragging.current = false;
   }, []);
 
+  // ── Keyboard ─────────────────────────────────────────────────
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Escape') onClose();
@@ -301,7 +339,6 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
 
   if (!leftPhoto || !rightPhoto) return null;
 
-  const anchorIdx = photos.findIndex(p => p.id === anchorId);
   // Check if prev/next are available (skipping anchor)
   let hasPrev = false;
   for (let i = rightIdx - 1; i >= 0; i--) {
@@ -314,6 +351,10 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
 
   const leftDate = formatDate(leftPhoto.exif_date);
   const rightDate = formatDate(rightPhoto.exif_date);
+
+  const anyZoomed = mode === 'side'
+    ? (leftZoom.isZoomed || rightZoom.isZoomed)
+    : overlayZoom.isZoomed;
 
   return (
     <div style={styles.overlay}>
@@ -339,17 +380,39 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
 
       {mode === 'side' ? (
         <div style={styles.container}>
-          <div style={styles.side}>
-            <img src={leftPhoto.preview_url} alt={leftPhoto.filename} style={styles.image} />
+          {/* Left side (anchor) */}
+          <div style={styles.side} {...leftZoom.bind}>
+            <img
+              src={leftPhoto.preview_url}
+              alt={leftPhoto.filename}
+              style={{ ...styles.image, ...leftZoom.imageStyle }}
+              draggable={false}
+            />
+            {leftZoom.isZoomed && (
+              <div style={styles.zoomIndicator}>
+                {Math.round(leftZoom.transform.scale * 100)}%
+              </div>
+            )}
             <div style={styles.label}>{leftPhoto.filename} (anchor)</div>
           </div>
           <div style={styles.divider} />
-          <div style={{ ...styles.side, position: 'relative' }}>
-            {hasPrev && (
+          {/* Right side (navigable) */}
+          <div style={styles.side} {...rightZoom.bind}>
+            {hasPrev && !rightZoom.isZoomed && (
               <button style={{ ...styles.navBtn, left: '8px' }} onClick={goPrev}>&#8249;</button>
             )}
-            <img src={rightPhoto.preview_url} alt={rightPhoto.filename} style={styles.image} />
-            {hasNext && (
+            <img
+              src={rightPhoto.preview_url}
+              alt={rightPhoto.filename}
+              style={{ ...styles.image, ...rightZoom.imageStyle }}
+              draggable={false}
+            />
+            {rightZoom.isZoomed && (
+              <div style={styles.zoomIndicator}>
+                {Math.round(rightZoom.transform.scale * 100)}%
+              </div>
+            )}
+            {hasNext && !rightZoom.isZoomed && (
               <button style={{ ...styles.navBtn, right: '8px' }} onClick={goNext}>&#8250;</button>
             )}
             <div style={styles.label}>{rightPhoto.filename}</div>
@@ -357,17 +420,23 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
         </div>
       ) : (
         <div
-          ref={containerRef}
+          ref={(el) => {
+            sliderContainerRef.current = el;
+            overlayZoom.bind.ref.current = el;
+          }}
           style={styles.overlayContainer}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
+          onPointerDown={overlayZoom.bind.onPointerDown}
+          onPointerMove={overlayZoom.bind.onPointerMove}
+          onPointerUp={overlayZoom.bind.onPointerUp}
+          onTouchStart={overlayZoom.bind.onTouchStart}
+          onTouchMove={overlayZoom.bind.onTouchMove}
+          onTouchEnd={overlayZoom.bind.onTouchEnd}
         >
-          {/* Right photo as base layer (fully visible) */}
+          {/* Right photo as base layer */}
           <img
             src={rightPhoto.preview_url}
             alt={rightPhoto.filename}
-            style={styles.overlayImgBase}
+            style={{ ...styles.overlayImgBase, ...overlayZoom.imageStyle }}
           />
 
           {/* Left photo clipped to slider position */}
@@ -376,27 +445,38 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
             alt={leftPhoto.filename}
             style={{
               ...styles.overlayImgTop,
+              ...overlayZoom.imageStyle,
               clipPath: `inset(0 ${(1 - sliderPos) * 100}% 0 0)`,
             }}
           />
 
-          {/* Slider line + handle */}
-          <div style={{ ...styles.sliderLine, left: `calc(${sliderPos * 100}% - 1.5px)` }}>
+          {/* Slider grab zone — wide invisible area for easy grabbing */}
+          <div
+            style={{ ...styles.sliderGrabZone, left: `calc(${sliderPos * 100}% - 20px)` }}
+            onPointerDown={onSliderPointerDown}
+            onPointerMove={onSliderPointerMove}
+            onPointerUp={onSliderPointerUp}
+          >
+            <div style={styles.sliderLine} />
             <div style={styles.sliderHandle}>&#x2B0C;</div>
           </div>
 
           {/* Labels */}
-          <div style={{ ...styles.overlayLabel, left: '10px' }}>{leftPhoto.filename} (anchor)</div>
-          <div style={{ ...styles.overlayLabel, right: '10px' }}>{rightPhoto.filename}</div>
+          {!overlayZoom.isZoomed && (
+            <>
+              <div style={{ ...styles.overlayLabel, left: '10px' }}>{leftPhoto.filename} (anchor)</div>
+              <div style={{ ...styles.overlayLabel, right: '10px' }}>{rightPhoto.filename}</div>
+            </>
+          )}
 
           {/* Nav buttons */}
-          {hasPrev && (
+          {hasPrev && !overlayZoom.isZoomed && (
             <button
               style={{ ...styles.navBtn, left: '8px', pointerEvents: 'auto' }}
               onPointerDown={(e) => { e.stopPropagation(); goPrev(); }}
             >&#8249;</button>
           )}
-          {hasNext && (
+          {hasNext && !overlayZoom.isZoomed && (
             <button
               style={{ ...styles.navBtn, right: '8px', pointerEvents: 'auto' }}
               onPointerDown={(e) => { e.stopPropagation(); goNext(); }}
@@ -404,11 +484,18 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
           )}
 
           {/* Date stamps */}
-          {leftDate && (
+          {leftDate && !overlayZoom.isZoomed && (
             <div style={{ ...styles.overlayDateStamp, left: '10px' }}>{leftDate}</div>
           )}
-          {rightDate && (
+          {rightDate && !overlayZoom.isZoomed && (
             <div style={{ ...styles.overlayDateStamp, right: '10px' }}>{rightDate}</div>
+          )}
+
+          {/* Zoom indicator */}
+          {overlayZoom.isZoomed && (
+            <div style={styles.zoomIndicator}>
+              {Math.round(overlayZoom.transform.scale * 100)}% — double-tap or scroll to reset
+            </div>
           )}
         </div>
       )}
