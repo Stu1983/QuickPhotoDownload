@@ -115,10 +115,6 @@ async def ingest_file(filepath: str) -> bool:
         await loop.run_in_executor(_executor, safe_move, raw_path, raw_dest)
         raw_filename = os.path.basename(raw_path)
 
-    # Fix timestamps
-    if exif.date_taken:
-        await loop.run_in_executor(_executor, safe_set_timestamps, dest_path, exif.date_taken)
-
     # Insert into DB and generate thumbnails
     db = await get_db()
     try:
@@ -155,6 +151,11 @@ async def ingest_file(filepath: str) -> bool:
         if photo_id and photo_id > 0:
             await _ensure_thumbnails(db, photo_id, dest_path)
             await _update_folder(db, folder_name, date_prefix)
+
+            # Fix timestamps LAST — after all file reads (thumbnails) are done
+            if exif.date_taken:
+                await loop.run_in_executor(_executor, safe_set_timestamps, dest_path, exif.date_taken)
+
             logger.info("Ingested %s → %s/%s (id=%d)", filepath, folder_name, filename, photo_id)
             return True
 
@@ -196,10 +197,6 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
 
         date_prefix = folder_name[:6] if len(folder_name) >= 6 else folder_name
 
-        # Fix file timestamps to match EXIF date
-        if exif.date_taken:
-            await loop.run_in_executor(_executor, safe_set_timestamps, filepath, exif.date_taken)
-
         cursor = await db.execute(
             """INSERT OR IGNORE INTO photos
                (filename, original_path, folder_name, exif_date, exif_date_day,
@@ -232,6 +229,11 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
         if photo_id and photo_id > 0:
             await _ensure_thumbnails(db, photo_id, filepath)
             await _update_folder(db, folder_name, date_prefix)
+
+            # Fix file timestamps LAST — after all file reads (thumbnails) are done
+            if exif.date_taken:
+                await loop.run_in_executor(_executor, safe_set_timestamps, filepath, exif.date_taken)
+
             logger.info("Indexed existing file: %s/%s (id=%d)", folder_name, filename, photo_id)
             return True
         return False

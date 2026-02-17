@@ -29,14 +29,31 @@ def safe_move(src: str, dst: str) -> bool:
 
 
 def safe_set_timestamps(filepath: str, exif_datetime: datetime) -> bool:
-    """Set file timestamps with retry logic."""
+    """Set file atime and mtime to match the EXIF date taken."""
     ts = exif_datetime.timestamp()
     retries = config.FILE_OP_RETRIES
     delay = config.FILE_OP_RETRY_DELAY
+
+    before_mtime = os.path.getmtime(filepath) if os.path.exists(filepath) else None
+
     for attempt in range(retries):
         try:
             os.utime(filepath, (ts, ts))
-            return True
+            # Verify the change stuck
+            after_mtime = os.path.getmtime(filepath)
+            if abs(after_mtime - ts) < 2:
+                logger.info(
+                    "Set timestamps on %s: exif=%s, before_mtime=%.0f, after_mtime=%.0f",
+                    os.path.basename(filepath), exif_datetime.isoformat(), before_mtime or 0, after_mtime,
+                )
+                return True
+            else:
+                logger.warning(
+                    "utime appeared to succeed but mtime didn't change on %s: "
+                    "expected=%.0f, got=%.0f",
+                    os.path.basename(filepath), ts, after_mtime,
+                )
+                return False
         except (PermissionError, OSError) as e:
             if attempt < retries - 1:
                 logger.warning("Retry %d/%d setting timestamps on %s: %s", attempt + 1, retries, filepath, e)
