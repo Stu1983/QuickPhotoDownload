@@ -23,31 +23,38 @@ _executor = ThreadPoolExecutor(max_workers=4)
 
 
 async def _ensure_thumbnails(db: aiosqlite.Connection, photo_id: int, source_path: str):
-    """Generate thumbnail and preview if they don't exist on disk."""
+    """Generate thumbnail/preview if missing on disk, and re-check RAW pair."""
     loop = asyncio.get_event_loop()
     thumb_path = os.path.join(config.THUMBS_DIR, f"{photo_id}.jpg")
     preview_path = os.path.join(config.PREVIEWS_DIR, f"{photo_id}.jpg")
 
-    regenerated = False
+    changed = False
     if not os.path.exists(thumb_path):
         ok = await loop.run_in_executor(_executor, generate_thumbnail, source_path, thumb_path)
         if ok:
-            regenerated = True
+            changed = True
             logger.info("Regenerated thumbnail for photo %d", photo_id)
     if not os.path.exists(preview_path):
         ok = await loop.run_in_executor(_executor, generate_preview, source_path, preview_path)
         if ok:
-            regenerated = True
+            changed = True
             logger.info("Regenerated preview for photo %d", photo_id)
 
-    if regenerated:
+    # Re-check RAW pair (may have been missed on first ingest)
+    raw_path = await loop.run_in_executor(_executor, find_matching_raw, source_path)
+    has_raw = raw_path is not None
+    raw_filename = os.path.basename(raw_path) if raw_path else None
+
+    if changed or has_raw:
         await db.execute(
-            "UPDATE photos SET thumbnail_path = ?, preview_path = ? WHERE id = ?",
-            (f"{photo_id}.jpg", f"{photo_id}.jpg", photo_id),
+            """UPDATE photos SET thumbnail_path = ?, preview_path = ?,
+               has_raw_pair = ?, raw_filename = COALESCE(?, raw_filename)
+               WHERE id = ?""",
+            (f"{photo_id}.jpg", f"{photo_id}.jpg", has_raw, raw_filename, photo_id),
         )
         await db.commit()
 
-    return regenerated
+    return changed
 
 
 async def ingest_file(filepath: str) -> bool:
@@ -190,9 +197,9 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
                 folder_name,
                 exif.iso_date,
                 exif.date_day,
-                os.path.getsize(filepath) if os.path.exists(filepath) else None,
                 exif.width,
                 exif.height,
+                os.path.getsize(filepath) if os.path.exists(filepath) else None,
                 find_matching_raw(filepath) is not None,
                 os.path.basename(find_matching_raw(filepath)) if find_matching_raw(filepath) else None,
             ),
