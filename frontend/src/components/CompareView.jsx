@@ -79,6 +79,26 @@ const styles = {
     fontSize: '0.8rem',
     whiteSpace: 'nowrap',
   },
+  linkBtn: {
+    padding: '5px 10px',
+    borderRadius: '6px',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    color: '#aaa',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    whiteSpace: 'nowrap',
+  },
+  linkBtnActive: {
+    padding: '5px 10px',
+    borderRadius: '6px',
+    background: '#2a5a2a',
+    border: '1px solid #4a8a4a',
+    color: '#8f8',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    whiteSpace: 'nowrap',
+  },
 
   /* Side-by-side styles */
   container: {
@@ -267,6 +287,11 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
   const sliderContainerRef = useRef(null);
   const sliderDragging = useRef(false);
 
+  // Link toggles for side-by-side mode (default on)
+  const [zoomLinked, setZoomLinked] = useState(true);
+  const [panLinked, setPanLinked] = useState(true);
+  const activeSide = useRef(null);
+
   // Three zoom instances (always called — React hook rules)
   const leftZoom = usePanZoom();
   const rightZoom = usePanZoom();
@@ -306,25 +331,77 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
     overlayZoom.reset();
   }, [mode, anchorId, rightIdx]);
 
+  // ── Linked zoom/pan sync for side-by-side ────────────────────
+  useEffect(() => {
+    if (mode !== 'side' || (!zoomLinked && !panLinked)) return;
+    if (!activeSide.current) return;
+
+    const srcZoom = activeSide.current === 'left' ? leftZoom : rightZoom;
+    const tgtZoom = activeSide.current === 'left' ? rightZoom : leftZoom;
+
+    const updates = {};
+
+    if (zoomLinked && srcZoom.transform.scale !== tgtZoom.transform.scale) {
+      updates.scale = srcZoom.transform.scale;
+    }
+    if (panLinked && (srcZoom.transform.x !== tgtZoom.transform.x || srcZoom.transform.y !== tgtZoom.transform.y)) {
+      updates.x = srcZoom.transform.x;
+      updates.y = srcZoom.transform.y;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      tgtZoom.setTransform(prev => ({ ...prev, ...updates }));
+    }
+  }, [
+    leftZoom.transform.scale, leftZoom.transform.x, leftZoom.transform.y,
+    rightZoom.transform.scale, rightZoom.transform.x, rightZoom.transform.y,
+    zoomLinked, panLinked, mode,
+  ]);
+
+  // When toggling a link ON, snap right to match left immediately
+  const toggleZoomLink = () => {
+    if (!zoomLinked) {
+      rightZoom.setTransform(prev => ({ ...prev, scale: leftZoom.transform.scale }));
+    }
+    setZoomLinked(z => !z);
+  };
+  const togglePanLink = () => {
+    if (!panLinked) {
+      rightZoom.setTransform(prev => ({
+        ...prev,
+        x: leftZoom.transform.x,
+        y: leftZoom.transform.y,
+      }));
+    }
+    setPanLinked(p => !p);
+  };
+
   // ── Slider drag (overlay mode) — only on the grab zone ──────
   const onSliderPointerDown = useCallback((e) => {
     e.stopPropagation();
+    e.preventDefault();
     sliderDragging.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
   }, []);
 
   const onSliderPointerMove = useCallback((e) => {
     if (!sliderDragging.current) return;
-    // Use the overlay container for position reference
+    e.stopPropagation();
     const rect = sliderContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     setSliderPos(x / rect.width);
   }, []);
 
-  const onSliderPointerUp = useCallback(() => {
+  const onSliderPointerUp = useCallback((e) => {
+    e.stopPropagation();
     sliderDragging.current = false;
   }, []);
+
+  // Stop touch events from reaching overlay container (prevents pan conflict)
+  const onSliderTouchStart = useCallback((e) => { e.stopPropagation(); }, []);
+  const onSliderTouchMove = useCallback((e) => { e.stopPropagation(); e.preventDefault(); }, []);
+  const onSliderTouchEnd = useCallback((e) => { e.stopPropagation(); }, []);
 
   // ── Keyboard ─────────────────────────────────────────────────
   useEffect(() => {
@@ -375,13 +452,40 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
             Overlay
           </button>
           <button style={styles.swapBtn} onClick={swap}>Swap</button>
+          {mode === 'side' && (
+            <>
+              <button
+                style={zoomLinked ? styles.linkBtnActive : styles.linkBtn}
+                onClick={toggleZoomLink}
+              >
+                Zoom Link
+              </button>
+              <button
+                style={panLinked ? styles.linkBtnActive : styles.linkBtn}
+                onClick={togglePanLink}
+              >
+                Pan Link
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {mode === 'side' ? (
         <div style={styles.container}>
-          {/* Left side (anchor) */}
-          <div style={styles.side} {...leftZoom.bind}>
+          {/* Left side (anchor) — track as active on interaction */}
+          <div
+            style={styles.side}
+            ref={leftZoom.bind.ref}
+            onPointerDown={(e) => { activeSide.current = 'left'; leftZoom.bind.onPointerDown(e); }}
+            onPointerMove={leftZoom.bind.onPointerMove}
+            onPointerUp={leftZoom.bind.onPointerUp}
+            onPointerEnter={() => { activeSide.current = 'left'; }}
+            onTouchStart={(e) => { activeSide.current = 'left'; leftZoom.bind.onTouchStart(e); }}
+            onTouchMove={leftZoom.bind.onTouchMove}
+            onTouchEnd={leftZoom.bind.onTouchEnd}
+            onWheel={() => { activeSide.current = 'left'; }}
+          >
             <img
               src={leftPhoto.preview_url}
               alt={leftPhoto.filename}
@@ -396,8 +500,19 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
             <div style={styles.label}>{leftPhoto.filename} (anchor)</div>
           </div>
           <div style={styles.divider} />
-          {/* Right side (navigable) */}
-          <div style={styles.side} {...rightZoom.bind}>
+          {/* Right side (navigable) — track as active on interaction */}
+          <div
+            style={styles.side}
+            ref={rightZoom.bind.ref}
+            onPointerDown={(e) => { activeSide.current = 'right'; rightZoom.bind.onPointerDown(e); }}
+            onPointerMove={rightZoom.bind.onPointerMove}
+            onPointerUp={rightZoom.bind.onPointerUp}
+            onPointerEnter={() => { activeSide.current = 'right'; }}
+            onTouchStart={(e) => { activeSide.current = 'right'; rightZoom.bind.onTouchStart(e); }}
+            onTouchMove={rightZoom.bind.onTouchMove}
+            onTouchEnd={rightZoom.bind.onTouchEnd}
+            onWheel={() => { activeSide.current = 'right'; }}
+          >
             {hasPrev && !rightZoom.isZoomed && (
               <button style={{ ...styles.navBtn, left: '8px' }} onClick={goPrev}>&#8249;</button>
             )}
@@ -450,12 +565,15 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
             }}
           />
 
-          {/* Slider grab zone — wide invisible area for easy grabbing */}
+          {/* Slider grab zone — stops both pointer AND touch propagation */}
           <div
             style={{ ...styles.sliderGrabZone, left: `calc(${sliderPos * 100}% - 20px)` }}
             onPointerDown={onSliderPointerDown}
             onPointerMove={onSliderPointerMove}
             onPointerUp={onSliderPointerUp}
+            onTouchStart={onSliderTouchStart}
+            onTouchMove={onSliderTouchMove}
+            onTouchEnd={onSliderTouchEnd}
           >
             <div style={styles.sliderLine} />
             <div style={styles.sliderHandle}>&#x2B0C;</div>

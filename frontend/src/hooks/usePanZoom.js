@@ -198,5 +198,5 @@ export default function usePanZoom() {
     cursor: isZoomed ? 'grab' : 'default',
   };
 
-  return { transform, isZoomed, bind, imageStyle, reset };
+  return { transform, isZoomed, bind, imageStyle, reset, setTransform };
 }
