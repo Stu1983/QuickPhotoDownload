@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import PhotoGrid from '../components/PhotoGrid';
 import PhotoViewer from '../components/PhotoViewer';
 import CompareView from '../components/CompareView';
@@ -63,6 +63,13 @@ export default function HomePage() {
       return [...prev, id];
     });
   }, []);
+
+  // Auto-close viewer and show compare when second photo is selected
+  useEffect(() => {
+    if (compareIds.length === 2 && viewerIndex !== null) {
+      setViewerIndex(null);
+    }
+  }, [compareIds.length, viewerIndex]);
 
   return (
     <>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 const styles = {
@@ -61,12 +61,23 @@ const styles = {
     fontSize: '0.85rem',
     cursor: 'pointer',
   },
+  fullscreenBtn: {
+    padding: '6px 10px',
+    borderRadius: '6px',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-secondary)',
+    fontSize: '1rem',
+    cursor: 'pointer',
+    lineHeight: 1,
+  },
 };
 
 export default function Toolbar() {
   const location = useLocation();
   const [flagCount, setFlagCount] = useState(0);
   const [scanning, setScanning] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
 
   useEffect(() => {
     fetch('/api/flags/summary')
@@ -78,6 +89,12 @@ export default function Toolbar() {
       .catch(() => {});
   }, [location]);
 
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
   const handleScan = async () => {
     setScanning(true);
     try {
@@ -87,6 +104,14 @@ export default function Toolbar() {
     }
     setScanning(false);
   };
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }, []);
 
   const isActive = (path) => location.pathname === path;
 
@@ -116,6 +141,13 @@ export default function Toolbar() {
       </nav>
       <button style={styles.scanBtn} onClick={handleScan} disabled={scanning}>
         {scanning ? 'Scanning...' : 'Rescan'}
+      </button>
+      <button
+        style={styles.fullscreenBtn}
+        onClick={toggleFullscreen}
+        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      >
+        {isFullscreen ? '\u2716' : '\u26F6'}
       </button>
     </header>
   );
