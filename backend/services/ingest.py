@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import aiosqlite
 
@@ -22,6 +23,41 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=4)
 
 
+async def _ensure_thumbnails(db: aiosqlite.Connection, photo_id: int, source_path: str):
+    """Generate thumbnail/preview if missing on disk, and re-check RAW pair."""
+    loop = asyncio.get_event_loop()
+    thumb_path = os.path.join(config.THUMBS_DIR, f"{photo_id}.jpg")
+    preview_path = os.path.join(config.PREVIEWS_DIR, f"{photo_id}.jpg")
+
+    changed = False
+    if not os.path.exists(thumb_path):
+        ok = await loop.run_in_executor(_executor, generate_thumbnail, source_path, thumb_path)
+        if ok:
+            changed = True
+            logger.info("Regenerated thumbnail for photo %d", photo_id)
+    if not os.path.exists(preview_path):
+        ok = await loop.run_in_executor(_executor, generate_preview, source_path, preview_path)
+        if ok:
+            changed = True
+            logger.info("Regenerated preview for photo %d", photo_id)
+
+    # Re-check RAW pair (may have been missed on first ingest)
+    raw_path = await loop.run_in_executor(_executor, find_matching_raw, source_path)
+    has_raw = raw_path is not None
+    raw_filename = os.path.basename(raw_path) if raw_path else None
+
+    if changed or has_raw:
+        await db.execute(
+            """UPDATE photos SET thumbnail_path = ?, preview_path = ?,
+               has_raw_pair = ?, raw_filename = COALESCE(?, raw_filename)
+               WHERE id = ?""",
+            (f"{photo_id}.jpg", f"{photo_id}.jpg", has_raw, raw_filename, photo_id),
+        )
+        await db.commit()
+
+    return changed
+
+
 async def ingest_file(filepath: str) -> bool:
     """Ingest a single JPEG file from the source directory."""
     filename = os.path.basename(filepath)
@@ -40,7 +76,6 @@ async def ingest_file(filepath: str) -> bool:
     if not date_prefix:
         # Use file modification date as fallback
         mtime = os.path.getmtime(filepath)
-        from datetime import datetime
         dt = datetime.fromtimestamp(mtime)
         date_prefix = dt.strftime("%d%m%y")
         exif.date_taken = dt
@@ -80,10 +115,6 @@ async def ingest_file(filepath: str) -> bool:
         await loop.run_in_executor(_executor, safe_move, raw_path, raw_dest)
         raw_filename = os.path.basename(raw_path)
 
-    # Fix timestamps
-    if exif.date_taken:
-        await loop.run_in_executor(_executor, safe_set_timestamps, dest_path, exif.date_taken)
-
     # Insert into DB and generate thumbnails
     db = await get_db()
     try:
@@ -108,28 +139,32 @@ async def ingest_file(filepath: str) -> bool:
         await db.commit()
 
         photo_id = cursor.lastrowid
-        if photo_id and photo_id > 0:
-            thumb_path = os.path.join(config.THUMBS_DIR, f"{photo_id}.jpg")
-            preview_path = os.path.join(config.PREVIEWS_DIR, f"{photo_id}.jpg")
-
-            await loop.run_in_executor(_executor, generate_thumbnail, dest_path, thumb_path)
-            await loop.run_in_executor(_executor, generate_preview, dest_path, preview_path)
-
-            await db.execute(
-                "UPDATE photos SET thumbnail_path = ?, preview_path = ? WHERE id = ?",
-                (f"{photo_id}.jpg", f"{photo_id}.jpg", photo_id),
+        if not photo_id or photo_id == 0:
+            # Row already existed — look up its ID and repair thumbnails if needed
+            rows = await db.execute_fetchall(
+                "SELECT id FROM photos WHERE original_path = ? AND filename = ?",
+                (folder_name, filename),
             )
-            await db.commit()
+            if rows:
+                photo_id = rows[0][0]
 
-            # Update folder record
+        if photo_id and photo_id > 0:
+            await _ensure_thumbnails(db, photo_id, dest_path)
             await _update_folder(db, folder_name, date_prefix)
+
+            # Fix timestamps LAST — after all file reads (thumbnails) are done
+            if exif.date_taken:
+                await loop.run_in_executor(_executor, safe_set_timestamps, dest_path, exif.date_taken)
+                # Also stamp the paired RAW file
+                if raw_filename:
+                    raw_dest = os.path.join(folder_path, raw_filename)
+                    if os.path.exists(raw_dest):
+                        await loop.run_in_executor(_executor, safe_set_timestamps, raw_dest, exif.date_taken)
 
             logger.info("Ingested %s → %s/%s (id=%d)", filepath, folder_name, filename, photo_id)
             return True
-        else:
-            # Photo already existed
-            logger.debug("Photo already in DB: %s/%s", folder_name, filename)
-            return False
+
+        return False
     finally:
         await db.close()
 
@@ -140,20 +175,36 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
     if should_ignore(filename) or not is_jpeg(filename):
         return False
 
-    loop = asyncio.get_event_loop()
-    exif = await loop.run_in_executor(_executor, read_exif, filepath)
-
-    date_prefix = folder_name[:6] if len(folder_name) >= 6 else folder_name
-
     db = await get_db()
     try:
+        loop = asyncio.get_event_loop()
+
         # Check if already indexed
-        row = await db.execute_fetchall(
-            "SELECT id FROM photos WHERE original_path = ? AND filename = ?",
+        rows = await db.execute_fetchall(
+            "SELECT id, exif_date FROM photos WHERE original_path = ? AND filename = ?",
             (folder_name, filename),
         )
-        if row:
+        if rows:
+            # Already in DB — ensure thumbnails and fix timestamps
+            photo_id = rows[0][0]
+            exif_date_str = rows[0][1]
+            await _ensure_thumbnails(db, photo_id, filepath)
+            # Repair file timestamps from stored EXIF date
+            if exif_date_str:
+                try:
+                    dt = datetime.fromisoformat(exif_date_str)
+                    await loop.run_in_executor(_executor, safe_set_timestamps, filepath, dt)
+                    # Also stamp the paired RAW file
+                    raw_path = await loop.run_in_executor(_executor, find_matching_raw, filepath)
+                    if raw_path and os.path.exists(raw_path):
+                        await loop.run_in_executor(_executor, safe_set_timestamps, raw_path, dt)
+                except (ValueError, TypeError):
+                    pass
             return False
+
+        exif = await loop.run_in_executor(_executor, read_exif, filepath)
+
+        date_prefix = folder_name[:6] if len(folder_name) >= 6 else folder_name
 
         cursor = await db.execute(
             """INSERT OR IGNORE INTO photos
@@ -176,20 +227,26 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
         await db.commit()
 
         photo_id = cursor.lastrowid
-        if photo_id and photo_id > 0:
-            thumb_path = os.path.join(config.THUMBS_DIR, f"{photo_id}.jpg")
-            preview_path = os.path.join(config.PREVIEWS_DIR, f"{photo_id}.jpg")
-
-            await loop.run_in_executor(_executor, generate_thumbnail, filepath, thumb_path)
-            await loop.run_in_executor(_executor, generate_preview, filepath, preview_path)
-
-            await db.execute(
-                "UPDATE photos SET thumbnail_path = ?, preview_path = ? WHERE id = ?",
-                (f"{photo_id}.jpg", f"{photo_id}.jpg", photo_id),
+        if not photo_id or photo_id == 0:
+            rows = await db.execute_fetchall(
+                "SELECT id FROM photos WHERE original_path = ? AND filename = ?",
+                (folder_name, filename),
             )
-            await db.commit()
+            if rows:
+                photo_id = rows[0][0]
 
+        if photo_id and photo_id > 0:
+            await _ensure_thumbnails(db, photo_id, filepath)
             await _update_folder(db, folder_name, date_prefix)
+
+            # Fix file timestamps LAST — after all file reads (thumbnails) are done
+            if exif.date_taken:
+                await loop.run_in_executor(_executor, safe_set_timestamps, filepath, exif.date_taken)
+                # Also stamp the paired RAW file
+                raw_path = await loop.run_in_executor(_executor, find_matching_raw, filepath)
+                if raw_path and os.path.exists(raw_path):
+                    await loop.run_in_executor(_executor, safe_set_timestamps, raw_path, exif.date_taken)
+
             logger.info("Indexed existing file: %s/%s (id=%d)", folder_name, filename, photo_id)
             return True
         return False

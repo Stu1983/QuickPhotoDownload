@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import FlagBar from './FlagBar';
 import usePreloader from '../hooks/usePreloader';
+import usePanZoom from '../hooks/usePanZoom';
+
+function formatDate(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  } catch {
+    return null;
+  }
+}
 
 const styles = {
   overlay: {
@@ -40,6 +57,8 @@ const styles = {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'contain',
+    userSelect: 'none',
+    WebkitUserDrag: 'none',
   },
   navBtn: {
     position: 'absolute',
@@ -76,6 +95,33 @@ const styles = {
     background: 'var(--accent)',
     borderColor: 'var(--accent)',
   },
+  dateStamp: {
+    position: 'absolute',
+    bottom: '12px',
+    right: '12px',
+    background: 'rgba(0,0,0,0.6)',
+    color: '#ffa500',
+    fontSize: '0.9rem',
+    padding: '4px 10px',
+    borderRadius: '4px',
+    fontWeight: 700,
+    whiteSpace: 'nowrap',
+    zIndex: 10,
+    pointerEvents: 'none',
+  },
+  zoomIndicator: {
+    position: 'absolute',
+    top: '10px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'rgba(0,0,0,0.6)',
+    color: '#fff',
+    fontSize: '0.75rem',
+    padding: '3px 10px',
+    borderRadius: '12px',
+    pointerEvents: 'none',
+    zIndex: 10,
+  },
 };
 
 export default function PhotoViewer({
@@ -87,7 +133,8 @@ export default function PhotoViewer({
   onToggleCompare,
 }) {
   const [index, setIndex] = useState(initialIndex);
-  const touchStartX = useRef(null);
+  const { transform, isZoomed, bind, imageStyle, reset } = usePanZoom();
+  const swipeStart = useRef(null);
 
   const photo = photos[index];
   usePreloader(photos, index);
@@ -100,6 +147,15 @@ export default function PhotoViewer({
     setIndex(i => Math.max(i - 1, 0));
   }, []);
 
+  // Reset zoom when changing photo
+  const prevIndex = useRef(index);
+  useEffect(() => {
+    if (index !== prevIndex.current) {
+      reset();
+      prevIndex.current = index;
+    }
+  }, [index, reset]);
+
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'ArrowRight') goNext();
@@ -110,23 +166,42 @@ export default function PhotoViewer({
     return () => window.removeEventListener('keydown', handleKey);
   }, [goNext, goPrev, onClose]);
 
-  const handleTouchStart = (e) => {
-    touchStartX.current = e.touches[0].clientX;
-  };
+  // Swipe navigation — only when NOT zoomed in.
+  // The usePanZoom hook handles touch when zoomed; we handle swipe when not.
+  const handleSwipeStart = useCallback((e) => {
+    if (e.touches.length === 1 && !isZoomed) {
+      swipeStart.current = e.touches[0].clientX;
+    }
+  }, [isZoomed]);
 
-  const handleTouchEnd = (e) => {
-    if (touchStartX.current === null) return;
-    const diff = e.changedTouches[0].clientX - touchStartX.current;
+  const handleSwipeEnd = useCallback((e) => {
+    if (swipeStart.current === null || isZoomed) return;
+    const diff = e.changedTouches[0].clientX - swipeStart.current;
     if (Math.abs(diff) > 50) {
       if (diff > 0) goPrev();
       else goNext();
     }
-    touchStartX.current = null;
-  };
+    swipeStart.current = null;
+  }, [isZoomed, goNext, goPrev]);
 
   if (!photo) return null;
 
   const isInCompare = compareSelection?.includes(photo.id);
+  const dateText = formatDate(photo.exif_date);
+
+  // Merge the pan/zoom bind props with our swipe handlers
+  const containerProps = {
+    ...bind,
+    style: styles.imageContainer,
+    onTouchStart: (e) => {
+      bind.onTouchStart(e);
+      handleSwipeStart(e);
+    },
+    onTouchEnd: (e) => {
+      bind.onTouchEnd(e);
+      handleSwipeEnd(e);
+    },
+  };
 
   return (
     <div style={styles.overlay}>
@@ -142,12 +217,8 @@ export default function PhotoViewer({
         </a>
       </div>
 
-      <div
-        style={styles.imageContainer}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
-        {index > 0 && (
+      <div {...containerProps}>
+        {index > 0 && !isZoomed && (
           <button style={{ ...styles.navBtn, left: '8px' }} onClick={goPrev}>
             &#8249;
           </button>
@@ -155,9 +226,18 @@ export default function PhotoViewer({
         <img
           src={photo.preview_url}
           alt={photo.filename}
-          style={styles.image}
+          style={{ ...styles.image, ...imageStyle }}
+          draggable={false}
         />
-        {index < photos.length - 1 && (
+        {dateText && !isZoomed && (
+          <div style={styles.dateStamp}>{dateText}</div>
+        )}
+        {isZoomed && (
+          <div style={styles.zoomIndicator}>
+            {Math.round(transform.scale * 100)}% — double-tap or scroll to reset
+          </div>
+        )}
+        {index < photos.length - 1 && !isZoomed && (
           <button style={{ ...styles.navBtn, right: '8px' }} onClick={goNext}>
             &#8250;
           </button>

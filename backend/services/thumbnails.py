@@ -1,5 +1,6 @@
 import logging
 import os
+
 from PIL import Image, ImageOps
 
 from backend.config import config
