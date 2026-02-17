@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import aiosqlite
 
@@ -75,7 +76,6 @@ async def ingest_file(filepath: str) -> bool:
     if not date_prefix:
         # Use file modification date as fallback
         mtime = os.path.getmtime(filepath)
-        from datetime import datetime
         dt = datetime.fromtimestamp(mtime)
         date_prefix = dt.strftime("%d%m%y")
         exif.date_taken = dt
@@ -171,20 +171,34 @@ async def index_existing_file(filepath: str, folder_name: str) -> bool:
 
     db = await get_db()
     try:
+        loop = asyncio.get_event_loop()
+
         # Check if already indexed
         rows = await db.execute_fetchall(
-            "SELECT id FROM photos WHERE original_path = ? AND filename = ?",
+            "SELECT id, exif_date FROM photos WHERE original_path = ? AND filename = ?",
             (folder_name, filename),
         )
         if rows:
-            # Already in DB — just ensure thumbnails exist
-            await _ensure_thumbnails(db, rows[0][0], filepath)
+            # Already in DB — ensure thumbnails and fix timestamps
+            photo_id = rows[0][0]
+            exif_date_str = rows[0][1]
+            await _ensure_thumbnails(db, photo_id, filepath)
+            # Repair file timestamps from stored EXIF date
+            if exif_date_str:
+                try:
+                    dt = datetime.fromisoformat(exif_date_str)
+                    await loop.run_in_executor(_executor, safe_set_timestamps, filepath, dt)
+                except (ValueError, TypeError):
+                    pass
             return False
 
-        loop = asyncio.get_event_loop()
         exif = await loop.run_in_executor(_executor, read_exif, filepath)
 
         date_prefix = folder_name[:6] if len(folder_name) >= 6 else folder_name
+
+        # Fix file timestamps to match EXIF date
+        if exif.date_taken:
+            await loop.run_in_executor(_executor, safe_set_timestamps, filepath, exif.date_taken)
 
         cursor = await db.execute(
             """INSERT OR IGNORE INTO photos
