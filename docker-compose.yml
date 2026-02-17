@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  photo-browser:
+    build: .
+    container_name: photo-browser
+    ports:
+      - "8580:8080"
+    volumes:
+      - /mnt/user/camera-uploads:/photos/source
+      - /mnt/user/photos-sorted:/photos/sorted
+      - /mnt/user/appdata/photo-browser/cache:/app/cache
+    environment:
+      - TZ=Europe/London
+      - SCAN_INTERVAL_MINUTES=5
+      - THUMB_SIZE=400
+      - PREVIEW_SIZE=2000
+      - LOG_LEVEL=info
+    restart: unless-stopped

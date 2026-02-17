@@ -1,16 +1,20 @@
 #!/bin/bash
-# Docommenter Deployment Script for Unraid
-# Usage: ./deploy.sh [--branch <branch-name>] [--reset-db]
+# Photo Browser Deployment Script for Unraid
+# Usage: ./deploy.sh [--reset-db]
+#
+# One-liner to download and run (initial clone):
+#   curl -fsSL https://raw.githubusercontent.com/Stu1983/QuickPhotoDownload/main/deploy.sh -o /tmp/deploy-photo-browser.sh && bash /tmp/deploy-photo-browser.sh
 
 set -e
 
-APP_DIR="/mnt/user/appdata/docommenter"
-DATA_DIR="$APP_DIR/data"
-DOCS_DIR="$APP_DIR/documents"
-CONTAINER_NAME="docommenter"
-IMAGE_NAME="docommenter:local"
-PORT="1971"
-HTTPS_PORT="443"
+REPO_URL="https://github.com/Stu1983/QuickPhotoDownload.git"
+APP_DIR="/mnt/user/appdata/photo-browser"
+CACHE_DIR="$APP_DIR/cache"
+SOURCE_DIR="/mnt/user/camera-uploads"
+SORTED_DIR="/mnt/user/photos-sorted"
+CONTAINER_NAME="photo-browser"
+IMAGE_NAME="photo-browser:local"
+PORT="8580"
 
 # Colors for output
 RED='\033[0;31m'
@@ -18,7 +22,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}=== Docommenter Deployment ===${NC}"
+echo -e "${GREEN}=== Photo Browser Deployment ===${NC}"
 
 # Parse arguments
 RESET_DB=false
@@ -28,6 +32,13 @@ for arg in "$@"; do
         echo -e "${YELLOW}Database will be reset after deployment${NC}"
     fi
 done
+
+# Clone the repo if it doesn't exist yet
+if [ ! -d "$APP_DIR/.git" ]; then
+    echo -e "${GREEN}First-time setup — cloning repository...${NC}"
+    mkdir -p "$(dirname "$APP_DIR")"
+    git clone "$REPO_URL" "$APP_DIR"
+fi
 
 # Navigate to app directory
 cd "$APP_DIR"
@@ -115,40 +126,42 @@ docker rm "$CONTAINER_NAME" 2>/dev/null || true
 # Reset database if requested
 if [ "$RESET_DB" == true ]; then
     echo -e "${YELLOW}Resetting database...${NC}"
-    rm -f "$DATA_DIR/docommenter.db" "$DATA_DIR/docommenter.db-shm" "$DATA_DIR/docommenter.db-wal"
+    rm -f "$CACHE_DIR/photobrowser.db" "$CACHE_DIR/photobrowser.db-shm" "$CACHE_DIR/photobrowser.db-wal"
     echo -e "${GREEN}Database files removed. Fresh database will be created on startup.${NC}"
 fi
 
 # Ensure directories exist
-mkdir -p "$DATA_DIR"
-mkdir -p "$DOCS_DIR"
+mkdir -p "$CACHE_DIR/thumbs"
+mkdir -p "$CACHE_DIR/previews"
+mkdir -p "$SOURCE_DIR"
+mkdir -p "$SORTED_DIR"
 
 # Start new container
 echo -e "${GREEN}Starting new container...${NC}"
 docker run -d \
   --name "$CONTAINER_NAME" \
   -p "$PORT:8080" \
-  -p "$HTTPS_PORT:8443" \
-  -v "$DATA_DIR:/app/data" \
-  -v "$DOCS_DIR:/app/wwwroot/documents" \
+  -v "$SOURCE_DIR:/photos/source" \
+  -v "$SORTED_DIR:/photos/sorted" \
+  -v "$CACHE_DIR:/app/cache" \
   -e TZ=Europe/London \
+  -e SCAN_INTERVAL_MINUTES=5 \
+  -e THUMB_SIZE=400 \
+  -e PREVIEW_SIZE=2000 \
+  -e LOG_LEVEL=info \
   --restart unless-stopped \
   "$IMAGE_NAME"
 
-# Export the self-signed cert so the user can install it on Windows
-CERT_EXPORT_PATH="$APP_DIR/cert.pem"
-docker cp "$CONTAINER_NAME:/etc/nginx/ssl/cert.pem" "$CERT_EXPORT_PATH" 2>/dev/null && \
-  echo -e "${GREEN}SSL certificate exported to: ${YELLOW}$CERT_EXPORT_PATH${NC}" || \
-  echo -e "${YELLOW}Could not export SSL cert (container may still be starting)${NC}"
-
+echo ""
 echo -e "${GREEN}=== Deployment Complete ===${NC}"
 IP_ADDR=$(hostname -I | awk '{print $1}')
-echo -e "HTTP:  ${GREEN}http://$IP_ADDR:$PORT${NC}"
-echo -e "HTTPS: ${GREEN}https://$IP_ADDR:$HTTPS_PORT${NC}  (for Office WebDAV editing)"
+echo -e "Photo Browser: ${GREEN}http://$IP_ADDR:$PORT${NC}"
 echo ""
-echo -e "${YELLOW}To trust the HTTPS cert on Windows:${NC}"
-echo -e "  1. Download: ${GREEN}\\\\$(hostname)\\appdata\\docommenter\\cert.pem${NC}"
-echo -e "  2. Double-click → Install Certificate → Local Machine → Trusted Root CAs"
+echo -e "${YELLOW}Volume mounts:${NC}"
+echo -e "  Source (FTP uploads): ${GREEN}$SOURCE_DIR${NC} → /photos/source"
+echo -e "  Sorted (date folders): ${GREEN}$SORTED_DIR${NC} → /photos/sorted"
+echo -e "  Cache (thumbs, DB):   ${GREEN}$CACHE_DIR${NC} → /app/cache"
+echo ""
 
 # Show container status
 docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
