@@ -125,9 +125,10 @@ docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
 # Reset database if requested
 if [ "$RESET_DB" == true ]; then
-    echo -e "${YELLOW}Resetting database...${NC}"
+    echo -e "${YELLOW}Resetting database and thumbnail cache...${NC}"
     rm -f "$CACHE_DIR/photobrowser.db" "$CACHE_DIR/photobrowser.db-shm" "$CACHE_DIR/photobrowser.db-wal"
-    echo -e "${GREEN}Database files removed. Fresh database will be created on startup.${NC}"
+    rm -rf "$CACHE_DIR/thumbs" "$CACHE_DIR/previews"
+    echo -e "${GREEN}Database and thumbnails removed. Everything will be regenerated on startup.${NC}"
 fi
 
 # Ensure directories exist
