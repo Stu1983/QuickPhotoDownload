@@ -37,7 +37,10 @@ async def run_scan():
         # 4. Remove DB entries for files that no longer exist
         await _cleanup_missing()
 
-        # 5. Update folder counts
+        # 5. Remove orphaned cache files with no matching DB entry
+        await _cleanup_orphan_cache()
+
+        # 6. Update folder counts
         await _update_folder_counts()
 
         _last_scan = datetime.now().isoformat()
@@ -136,30 +139,52 @@ async def _repair_missing_thumbnails():
 
 
 async def _cleanup_missing():
-    """Remove DB entries for files that no longer exist on disk."""
+    """Remove DB entries and cached files for photos that no longer exist on disk."""
     db = await get_db()
     try:
-        rows = await db.execute_fetchall("SELECT id, original_path, filename, thumbnail_path, preview_path FROM photos")
+        rows = await db.execute_fetchall(
+            "SELECT id, original_path, filename FROM photos"
+        )
         removed = 0
         for row in rows:
-            filepath = os.path.join(config.SORTED_DIR, row[1], row[2])
+            photo_id, original_path, filename = row[0], row[1], row[2]
+            filepath = os.path.join(config.SORTED_DIR, original_path, filename)
             if not os.path.exists(filepath):
-                # Remove cached files
-                if row[3]:
-                    thumb = os.path.join(config.THUMBS_DIR, row[3])
-                    if os.path.exists(thumb):
-                        os.remove(thumb)
-                if row[4]:
-                    preview = os.path.join(config.PREVIEWS_DIR, row[4])
-                    if os.path.exists(preview):
-                        os.remove(preview)
+                # Always derive cache paths from ID — DB columns may be NULL
+                for cache_dir in (config.THUMBS_DIR, config.PREVIEWS_DIR):
+                    cached = os.path.join(cache_dir, f"{photo_id}.jpg")
+                    if os.path.exists(cached):
+                        os.remove(cached)
 
-                await db.execute("DELETE FROM photos WHERE id = ?", (row[0],))
+                await db.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
                 removed += 1
 
         if removed:
             await db.commit()
             logger.info("Removed %d missing photos from database", removed)
+    finally:
+        await db.close()
+
+
+async def _cleanup_orphan_cache():
+    """Remove cached thumbnails/previews that don't match any photo in the DB."""
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT id FROM photos")
+        valid_ids = {str(row[0]) for row in rows}
+
+        removed = 0
+        for cache_dir in (config.THUMBS_DIR, config.PREVIEWS_DIR):
+            if not os.path.isdir(cache_dir):
+                continue
+            for fname in os.listdir(cache_dir):
+                stem, ext = os.path.splitext(fname)
+                if ext.lower() == ".jpg" and stem not in valid_ids:
+                    os.remove(os.path.join(cache_dir, fname))
+                    removed += 1
+
+        if removed:
+            logger.info("Removed %d orphaned cache files", removed)
     finally:
         await db.close()
 
