@@ -384,6 +384,20 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
           <div style={{ ...styles.overlayLabel, left: '10px' }}>{leftPhoto.filename} (anchor)</div>
           <div style={{ ...styles.overlayLabel, right: '10px' }}>{rightPhoto.filename}</div>
 
+          {/* Nav buttons */}
+          {hasPrev && (
+            <button
+              style={{ ...styles.navBtn, left: '8px', pointerEvents: 'auto' }}
+              onPointerDown={(e) => { e.stopPropagation(); goPrev(); }}
+            >&#8249;</button>
+          )}
+          {hasNext && (
+            <button
+              style={{ ...styles.navBtn, right: '8px', pointerEvents: 'auto' }}
+              onPointerDown={(e) => { e.stopPropagation(); goNext(); }}
+            >&#8250;</button>
+          )}
+
           {/* Date stamps */}
           {leftDate && (
             <div style={{ ...styles.overlayDateStamp, left: '10px' }}>{leftDate}</div>
