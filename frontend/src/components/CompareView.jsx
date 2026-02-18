@@ -433,6 +433,14 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
     ? (leftZoom.isZoomed || rightZoom.isZoomed)
     : overlayZoom.isZoomed;
 
+  // Compute clip-path adjusted for overlay zoom/pan.
+  // clip-path inset() operates in pre-transform image space, but the slider
+  // is in screen space. Convert slider position back to image-space fraction.
+  const { scale: oScale, x: oTx } = overlayZoom.transform;
+  const cw = sliderContainerRef.current?.clientWidth || 1;
+  const clipFrac = (sliderPos - 0.5 - oTx / cw) / oScale + 0.5;
+  const overlayClipRight = Math.max(0, Math.min(1, 1 - clipFrac));
+
   return (
     <div style={styles.overlay}>
       <div style={styles.header}>
@@ -561,7 +569,7 @@ export default function CompareView({ photos, photoIds, onClose, onToggleFlag })
             style={{
               ...styles.overlayImgTop,
               ...overlayZoom.imageStyle,
-              clipPath: `inset(0 ${(1 - sliderPos) * 100}% 0 0)`,
+              clipPath: `inset(0 ${overlayClipRight * 100}% 0 0)`,
             }}
           />
 
